@@ -1,0 +1,8 @@
+/.vs
+/Debug
+/GB28181_Stress_Tools/Debug
+/GB28181_Stress_Tools/x64
+/x64/Debug
+*.iobj
+*.ipdb
+*.pdb
