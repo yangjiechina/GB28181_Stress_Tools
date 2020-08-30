@@ -209,7 +209,7 @@ osip_message_t* Device::create_request() {
 	char fromSip[256] = { 0 };
 	char toSip[256] = { 0 };
 
-	if (is_runing) {
+	if (!is_runing) {
 		return nullptr;
 	}
 
