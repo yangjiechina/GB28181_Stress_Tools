@@ -48,10 +48,20 @@ void Device::heartbeat_task() {
 	
 }
 void Device::push_task(){
-	udp_client = new UDPClient();
+	udp_client = new UDPClient(is_tcp);
 
-	if (0 != udp_client->bind(local_ip,listen_port)) {
+	int status = is_tcp ? udp_client->bind(local_ip, listen_port,target_ip, target_port):udp_client->bind(local_ip, listen_port);
+
+	if (0 != status) {
 		cout << "client bind port failed" << endl;
+		if (callback != nullptr) {
+			callback(list_index, Message{ STATUS_TYPE ,"绑定本地端口或者连接失败" });
+		}
+		if (callId != -1 && dialogId != -1) {
+			eXosip_lock(sip_context);
+			int ret = eXosip_call_terminate(sip_context, callId, dialogId);
+			eXosip_unlock(sip_context);
+		}
 		return;
 	}
 	is_pushing = true;
@@ -155,12 +165,23 @@ void Device::push_task(){
 			if ((i + 1)*single_packet_max_length > index) {
 				writed_count = index - (i* single_packet_max_length);
 			}
-			memcpy(rtp_packet,rtp_header,RTP_HDR_LEN);
-			memcpy(rtp_packet+ RTP_HDR_LEN,frame+ (i* single_packet_max_length), writed_count);
+			//添加包长字节
+			int rtp_start_index=0;
+
+			unsigned short rtp_packet_length = RTP_HDR_LEN + writed_count;
+			if (is_tcp) {
+				unsigned char  packt_length_ary[2];
+				packt_length_ary[0] = (rtp_packet_length >> 8) & 0xff;
+				packt_length_ary[1] = rtp_packet_length & 0xff;
+				memcpy(rtp_packet, packt_length_ary, 2);
+				rtp_start_index = 2;
+			}
+			memcpy(rtp_packet+ rtp_start_index,rtp_header,RTP_HDR_LEN);
+			memcpy(rtp_packet+ +rtp_start_index + RTP_HDR_LEN,frame+ (i* single_packet_max_length), writed_count);
 			rtp_seq++;
 
 			if (is_pushing) {
-				udp_client->send_packet(target_ip, target_port, rtp_packet, RTP_HDR_LEN + writed_count);
+				udp_client->send_packet(target_ip, target_port, rtp_packet, rtp_start_index + rtp_packet_length);
 			}
 			else {
 				if (nalu != nullptr) {
@@ -356,6 +377,9 @@ void Device::process_request() {
 		case EXOSIP_CALL_ACK:
 			//推送流
 			cout << "接收到ack，开始推流" << endl;
+			callId = evt->cid;
+			dialogId =  evt->did;
+
 			if(udp_client != nullptr){
 				udp_client->release();
 				delete udp_client;
@@ -369,6 +393,8 @@ void Device::process_request() {
 			}
 			break;
 		case EXOSIP_CALL_CLOSED:
+			callId = -1;
+			dialogId = -1;
 			if (callback != nullptr) {
 				callback(list_index, Message{ STATUS_TYPE ,"推流结束" });
 			}
@@ -421,14 +447,6 @@ void Device::process_request() {
 				callback(list_index, Message{ PULL_STREAM_PROTOCOL_TYPE ,is_tcp?"TCP":"UDP"});
 				callback(list_index, Message{ PULL_STREAM_PORT_TYPE ,port});
 			}
-
-			if (is_tcp) {
-				if (callback != nullptr) {
-					callback(list_index, Message{ STATUS_TYPE ,"不支持tcp推流" });
-				}
-				cout << "暂不支持TCP"<< endl;
-				break;
-			}
 			int ssrc = 0;
 			char  ssrc_c[10] = { 0 };
 			char * ssrc_address = strstr(sdp_body->body, "y=");
@@ -451,7 +469,12 @@ void Device::process_request() {
 			ss << "s=Play\r\n";
 			ss << "c=IN IP4 " << local_ip << "\r\n";
 			ss << "t=0 0\r\n";
-			ss << "m=video " << listen_port << " RTP/AVP 96\r\n";
+			if (!is_tcp) {
+				ss << "m=video " << listen_port << " TCP/RTP/AVP 96\r\n";
+			}
+			else {
+				ss << "m=video " << listen_port << " RTP/AVP 96\r\n";
+			}
 			ss << "a=sendonly\r\n";
 			ss << "a=rtpmap:96 PS/90000\r\n";
 			ss << "y=" << ssrc_c << "\r\n";

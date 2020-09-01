@@ -103,6 +103,10 @@ private:
 
 	bool is_runing;
 
+	int callId = -1;
+
+	int dialogId = -1;
+
 	void push_task();
 
 	void heartbeat_task();
