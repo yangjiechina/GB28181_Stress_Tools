@@ -29,45 +29,61 @@ extern "C" {
 #pragma comment(lib, "delayimp.lib")
 
 
+class ExosipCtxLock {
+public:
+	ExosipCtxLock(eXosip_t* ctx) :_ctx(ctx) {
+		eXosip_lock(_ctx);
+		//InfoL << "ctx lock!";
+	}
+
+	~ExosipCtxLock() {
+		eXosip_unlock(_ctx);
+		//InfoL << "ctx unlock!";
+	}
+private:
+	eXosip_t* _ctx;
+};
+
 
 class Device {
 
-	char deviceId[128] = { 0 };
+	char _deviceId[128] = { 0 };
 
-	char videoChannelId[128] = { 0 };
+	char _videoChannelId[128] = { 0 };
 
-	char server_sip_id[128] = { 0 };
+	char _server_sip_id[128] = { 0 };
 
-	char  server_sip_realm[10] = { 0 };
+	char  _server_sip_realm[10] = { 0 };
 
-	char server_ip[128] = { 0 };
+	char _server_ip[128] = { 0 };
 
-	int server_port;
+	int _server_port;
 
-	char password[128] = { 0 };
+	char _password[128] = { 0 };
 
-	char  local_ip[128] = { 0 };
+	char  _local_ip[128] = { 0 };
 
-	int local_port;
+	int _local_port;
 
-	eXosip_t * sip_context = nullptr;
+	eXosip_t *_sip_context = nullptr;
 
-	NaluProvider* nalu_provider = nullptr;
+	NaluProvider *_nalu_provider = nullptr;
 	uint32_t _ssrc = 0;
 
 
 public:
-	Device(const char * deviceId, const char * server_sip_id, const char * server_ip, int server_port, const char * password,
+	Device(const char *deviceId, const char *server_sip_id, const char *server_ip, int server_port, const char *password,
 		NaluProvider* nalu_provider) {
-		memcpy(this->deviceId, deviceId, strlen(deviceId));
-		memcpy(this->videoChannelId, deviceId, strlen(deviceId));
-		memcpy(this->server_sip_id, server_sip_id, strlen(server_sip_id));
-		memcpy(server_sip_realm, server_sip_id, 10);
-		memcpy(this->server_ip, server_ip, strlen(server_ip));
-		this->server_port = server_port;
-		memcpy(this->password, password, strlen(password));
-		this->nalu_provider = nalu_provider;
+		memcpy(this->_deviceId, deviceId, strlen(deviceId));
+		memcpy(this->_videoChannelId, deviceId, strlen(deviceId));
+		memcpy(this->_server_sip_id, server_sip_id, strlen(server_sip_id));
+		memcpy(_server_sip_realm, server_sip_id, 10);
+		memcpy(this->_server_ip, server_ip, strlen(server_ip));
+		this->_server_port = server_port;
+		memcpy(this->_password, password, strlen(password));
+		this->_nalu_provider = nalu_provider;
 	}
+
 	void start_sip_client(int local_port);
 
 	void stop_sip_client();
@@ -77,8 +93,20 @@ public:
 	void set_callback(std::function<void(int index, Message msg)> callback);
 
 	~Device() {
-		is_pushing = false;
-		is_runing = false;
+		_is_pushing = false;
+		_is_runing = false;
+
+		if(_push_stream_thread)
+			_push_stream_thread->join();
+
+		if (_sip_process_thread)
+			_sip_process_thread->join();
+
+		if (_sip_context != NULL) {
+			ExosipCtxLock lock(_sip_context);
+			eXosip_quit(_sip_context);
+			_sip_context = NULL;
+		}
 
 		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	}
@@ -95,30 +123,47 @@ private:
 	
 	void send_request(osip_message_t * request);
 
-	bool register_success;
-
-	bool is_tcp;
-
-	const char * target_ip;
-
-	int target_port;
-
-	int listen_port;
-
-	UDPClient* udp_client = nullptr;
-
-	bool is_pushing;
-
-	bool is_runing;
-
-	int callId = -1;
-
-	int dialogId = -1;
-
 	void push_task();
 
 	void heartbeat_task();
 
-	std::function<void(int index, Message msg)> callback;
+	void unregister();
+
+
+	void handler_message_new(eXosip_event_t *evt);
+	void handler_register(eXosip_event_t *evt, bool status);
+	void handler_call_ok(eXosip_event_t *evt);
+	void handler_call_close(eXosip_event_t *evt);
+	void handler_call_invite(eXosip_event_t *evt);
+
+private:
+
+	bool _register_success;
+
+	bool _is_tcp;
+
+	const char * _target_ip;
+
+	int _target_port;
+
+	int _listen_port;
+
+	UDPClient* _udp_client = nullptr;
+
+	bool _is_pushing;
+
+	bool _is_runing;
+
+	int _callId = -1;
+
+	int _dialogId = -1;
+
+	int _register_id;
+
+	std::function<void(int index, Message msg)> _callback;
+
+	std::shared_ptr<std::thread> _push_stream_thread;
+	std::shared_ptr<std::thread> _sip_process_thread;
+	std::shared_ptr<std::thread> _heartbeat_thread;
 	
 };

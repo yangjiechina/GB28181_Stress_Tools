@@ -21,7 +21,6 @@ using namespace std;
 #define new DEBUG_NEW
 #endif
 
-
 // CAboutDlg dialog used for App About
 
 class CAboutDlg : public CDialogEx
@@ -125,7 +124,7 @@ BOOL CGB28181StressToolsDlg::OnInitDialog()
 	// TODO: Add extra initialization here
 	//set_initial_config_params
 	m_edit_server_sip_id = "34020000002000000008";
-	m_edit_server_ip = "120.232.196.184";
+
 	m_edit_password = "12345678";
 	m_edit_server_port = 55003;
 	m_edit_device_count = 1;
@@ -303,12 +302,12 @@ void CGB28181StressToolsDlg::Start() {
 }
 void CGB28181StressToolsDlg::Stop() {
 	while (!m_device_vector.empty()) {
-		Device* device =  m_device_vector.back();
+		Device *device =  m_device_vector.back();
 		m_device_vector.pop_back();
 		device->stop_sip_client();
 		m_device_list.SetItemText(device->list_index, 6, _T(" Õ∑≈…Ë±∏"));
-		/*delete device;
-		device = nullptr;*/
+		delete device;
+		device = nullptr;
 	}
 }
 bool CGB28181StressToolsDlg::CheckParams() {
