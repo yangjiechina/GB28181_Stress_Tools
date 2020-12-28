@@ -89,7 +89,7 @@ void Device::push_task(){
 
 	char rtp_packet[RTP_HDR_LEN+1400];
 
-	int ssrc = 0xffffffff;
+	int ssrc = _ssrc;
 	int rtp_seq = 0;
 
 	Nalu *nalu = new Nalu();
@@ -202,19 +202,26 @@ void Device::push_task(){
 
 		}
 	}
-	if (udp_client != nullptr) {
-		udp_client->release();
-		delete udp_client;
-		udp_client = nullptr;
+
+	try {
+		if (udp_client != nullptr) {
+			udp_client->release();
+			delete udp_client;
+			udp_client = nullptr;
+		}
+		if (nalu != nullptr) {
+			delete nalu;
+			nalu = nullptr;
+		}
+		is_pushing = false;
+		//if (!is_runing) {
+		//	delete this;
+		//}
 	}
-	if (nalu != nullptr) {
-		delete nalu;
-		nalu = nullptr;
+	catch (exception& e) {
+		std::cout << "catch runtime error. " << e.what() << std::endl;
 	}
-	is_pushing = false;
-	if (!is_runing) {
-		delete this;
-	}
+	
 }
 
 void Device::send_request(osip_message_t * request) {
@@ -268,9 +275,9 @@ void Device::process_request() {
 		if (!is_runing) {
 			break;
 		}
-		eXosip_lock(sip_context);
-		eXosip_automatic_action(sip_context);
-		eXosip_unlock(sip_context);
+		//eXosip_lock(sip_context);
+		//eXosip_automatic_action(sip_context);
+		//eXosip_unlock(sip_context);
 		if (evt == NULL) {
 			continue;
 		}
@@ -322,6 +329,7 @@ void Device::process_request() {
 						ss << "<Item>\r\n";
 						ss << "<DeviceID>" << deviceId << "</DeviceID>\r\n";
 						ss << "<Name>IPC</Name>\r\n";
+						ss << "<Status>ON</Status>\r\n";
 						ss << "<ParentID>" << server_sip_id << "</ParentID>\r\n";
 						ss << "</Item>\r\n";
 						ss << "</DeviceList>\r\n";
@@ -363,14 +371,42 @@ void Device::process_request() {
 			}
 			if (401 == evt->response->status_code) {
 				if (callback != nullptr) {
-					callback(list_index, Message{ STATUS_TYPE ,"注册 401" });
+					callback(list_index, Message{ STATUS_TYPE ,"注册 401, 添加认证信息重新注册中..." });
 				}
 				osip_www_authenticate_t* www_authenticate_header;
 
 				osip_message_get_www_authenticate(evt->response, 0, &www_authenticate_header);
 
+				osip_message_t* reg = NULL;
+				int32_t result = -1;
+			
+				eXosip_lock(sip_context);
+				eXosip_clear_authentication_info(sip_context);
 				//struct eXosip_t *excontext, const char *username, const char *userid, const char *passwd, const char *ha1, const char *realm
-				eXosip_add_authentication_info(sip_context, deviceId, deviceId, password, "MD5", www_authenticate_header->realm);
+				result = eXosip_add_authentication_info(sip_context, deviceId, deviceId, password, "MD5", www_authenticate_header->realm);
+				if (result != 0) {
+					std::cout << "eXosip_add_authentication_info failed." << std::endl;
+					return;
+				}
+
+				result = eXosip_register_build_register(sip_context, evt->rid, 3600, &reg);
+				if (result != 0) {
+					std::cout << "eXosip_register_build_register failed." << std::endl;
+					return;
+				}
+
+				result = eXosip_register_send_register(sip_context, evt->rid, reg);
+				eXosip_unlock(sip_context);
+				if (0 != result){
+					std::cout << "eXosip_register_send_register authorization error!" << std::endl;
+					return;
+				}
+				std::cout << "eXosip_register_send_register authorization success!" << std::endl;
+			}
+			else {
+				if (callback) {
+					callback(list_index, Message{ STATUS_TYPE, "注册失败!" });
+				}
 			}
 			
 			break;
@@ -455,6 +491,7 @@ void Device::process_request() {
 				size_t length = end_address - ssrc_address;
 				memcpy(ssrc_c, ssrc_address + 2, length+1);
 				ssrc = atoi(ssrc_c);
+				_ssrc = ssrc;
 			}
 			//发送200_ok
 			listen_port = get_port();
@@ -477,7 +514,8 @@ void Device::process_request() {
 			}
 			ss << "a=sendonly\r\n";
 			ss << "a=rtpmap:96 PS/90000\r\n";
-			ss << "y=" << ssrc_c << "\r\n";
+			ss << "y=" << _ssrc << "\r\n";
+			ss << "f=" << "\r\n";
 			string sdp_str  = ss.str();
 
 
@@ -512,12 +550,10 @@ void Device::process_request() {
 		sip_context = NULL;
 	}
 	is_runing = false;
-	if (!is_pushing) {
-		delete this;
-	}
+	//if (!is_pushing) {
+	//	delete this;
+	//}
 }
-
-
 
 void Device::start_sip_client(int local_port) {
 	this->local_port = local_port;
@@ -566,7 +602,7 @@ void Device::start_sip_client(int local_port) {
 		return;
 	}
 	//提前输入了验证信息，在消息为401处，用eXosip_automatic_action()自动处理
-	//eXosip_add_authentication_info(sip_context,"022000000110000", "022000000110000", "12345678", "MD5", NULL);
+	eXosip_add_authentication_info(sip_context, deviceId, deviceId, password, "MD5", NULL);
 	eXosip_lock(sip_context);
 	eXosip_register_send_register(sip_context, register_id, register_message);
 	eXosip_unlock(sip_context);
@@ -578,6 +614,7 @@ void Device::start_sip_client(int local_port) {
 void Device::stop_sip_client() {
 	is_pushing = false;
 	is_runing = false;
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
 }
 void Device::set_callback(std::function<void(int index, Message msg)> callback) {
 	this->callback = std::move(callback);

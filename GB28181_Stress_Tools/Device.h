@@ -11,6 +11,8 @@ extern "C" {
 #include <vector>
 #include <functional>
 #include "Message.h"
+#include <thread>
+#include <chrono>
 
 
 //----exosip----//
@@ -51,6 +53,7 @@ class Device {
 	eXosip_t * sip_context = nullptr;
 
 	NaluProvider* nalu_provider = nullptr;
+	uint32_t _ssrc = 0;
 
 
 public:
@@ -74,7 +77,12 @@ public:
 	void set_callback(std::function<void(int index, Message msg)> callback);
 
 	~Device() {
+		is_pushing = false;
+		is_runing = false;
+
+		std::this_thread::sleep_for(std::chrono::milliseconds(200));
 	}
+
 private:
 
 	void process_request();
