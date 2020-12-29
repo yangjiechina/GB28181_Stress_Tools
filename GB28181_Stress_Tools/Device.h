@@ -45,43 +45,20 @@ private:
 };
 
 
-class Device {
-
-	char _deviceId[128] = { 0 };
-
-	char _videoChannelId[128] = { 0 };
-
-	char _server_sip_id[128] = { 0 };
-
-	char  _server_sip_realm[10] = { 0 };
-
-	char _server_ip[128] = { 0 };
-
-	int _server_port;
-
-	char _password[128] = { 0 };
-
-	char  _local_ip[128] = { 0 };
-
-	int _local_port;
-
-	eXosip_t *_sip_context = nullptr;
-
-	NaluProvider *_nalu_provider = nullptr;
-	uint32_t _ssrc = 0;
-
-
+class Device
+{
 public:
 	Device(const char *deviceId, const char *server_sip_id, const char *server_ip, int server_port, const char *password,
-		NaluProvider* nalu_provider) {
-		memcpy(this->_deviceId, deviceId, strlen(deviceId));
-		memcpy(this->_videoChannelId, deviceId, strlen(deviceId));
-		memcpy(this->_server_sip_id, server_sip_id, strlen(server_sip_id));
-		memcpy(_server_sip_realm, server_sip_id, 10);
-		memcpy(this->_server_ip, server_ip, strlen(server_ip));
-		this->_server_port = server_port;
-		memcpy(this->_password, password, strlen(password));
-		this->_nalu_provider = nalu_provider;
+		NaluProvider* nalu_provider):
+		_deviceId(deviceId),
+		_videoChannelId(deviceId),
+		_server_sip_id(server_sip_id),
+		_server_sip_realm(server_sip_id),
+		_server_ip(server_ip),
+		_password(password),
+		_server_port(server_port),
+		_nalu_provider(nalu_provider)
+	{
 	}
 
 	void start_sip_client(int local_port);
@@ -103,8 +80,8 @@ public:
 			_sip_process_thread->join();
 
 		if (_sip_context != NULL) {
-			ExosipCtxLock lock(_sip_context);
 			eXosip_quit(_sip_context);
+			osip_free(_sip_context);
 			_sip_context = NULL;
 		}
 
@@ -137,28 +114,35 @@ private:
 	void handler_call_invite(eXosip_event_t *evt);
 
 private:
+	std::string _deviceId;
+	std::string _videoChannelId;
+	std::string _server_sip_id;
+	std::string  _server_sip_realm;
+	std::string _server_ip;
+	std::string _password;
+	std::string  _local_ip;
 
-	bool _register_success;
+	uint16_t _server_port;
+	uint16_t _local_port;
+	uint32_t _ssrc;
 
-	bool _is_tcp;
+	eXosip_t* _sip_context = nullptr;
+	NaluProvider* _nalu_provider = nullptr;
 
-	const char * _target_ip;
+private:
+	bool _register_success = false;
+	bool _is_tcp = false;
+	bool _is_pushing = false;
+	bool _is_runing = false;
 
-	int _target_port;
+	char *_target_ip = nullptr;
+	uint16_t _target_port;
+	uint16_t _listen_port;
+	int32_t _callId = -1;
+	int32_t _dialogId = -1;
+	int32_t _register_id = -1;
 
-	int _listen_port;
-
-	UDPClient* _udp_client = nullptr;
-
-	bool _is_pushing;
-
-	bool _is_runing;
-
-	int _callId = -1;
-
-	int _dialogId = -1;
-
-	int _register_id;
+	UDPClient *_udp_client = nullptr;
 
 	std::function<void(int index, Message msg)> _callback;
 
@@ -166,4 +150,5 @@ private:
 	std::shared_ptr<std::thread> _sip_process_thread;
 	std::shared_ptr<std::thread> _heartbeat_thread;
 	
+	bool _is_logout = false;
 };

@@ -309,6 +309,8 @@ void CGB28181StressToolsDlg::Stop() {
 		delete device;
 		device = nullptr;
 	}
+
+	m_device_vector.clear();
 }
 bool CGB28181StressToolsDlg::CheckParams() {
 	if (m_edit_server_sip_id.GetLength() < 10) {

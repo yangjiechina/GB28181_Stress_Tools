@@ -38,11 +38,11 @@ void Device::heartbeat_task()
 		ss << "</Notify>\r\n";
 
 		osip_message_t* request = create_request();
-		if (request != NULL) {
-			osip_message_set_content_type(request, "Application/MANSCDP+xml");
-			osip_message_set_body(request, ss.str().c_str(), strlen(ss.str().c_str()));
-			send_request(request);
-		}
+		if(request == nullptr) break;
+	
+		osip_message_set_content_type(request, "Application/MANSCDP+xml");
+		osip_message_set_body(request, ss.str().c_str(), strlen(ss.str().c_str()));
+		send_request(request);
 
 		std::this_thread::sleep_for(std::chrono::seconds(60));
 	}
@@ -53,7 +53,7 @@ void Device::push_task()
 {
 	_udp_client = new UDPClient(_is_tcp);
 
-	int status = _is_tcp ? _udp_client->bind(_local_ip, _listen_port,_target_ip, _target_port):_udp_client->bind(_local_ip, _listen_port);
+	int status = _is_tcp ? _udp_client->bind(_local_ip.c_str(), _listen_port,_target_ip, _target_port):_udp_client->bind(_local_ip.c_str(), _listen_port);
 
 	if (0 != status) {
 		std::cout << "client bind port failed" << endl;
@@ -378,13 +378,18 @@ void Device::handler_register(eXosip_event_t* evt, bool status)
 			ExosipCtxLock lock(_sip_context);
 			eXosip_clear_authentication_info(_sip_context);
 			//struct eXosip_t *excontext, const char *username, const char *userid, const char *passwd, const char *ha1, const char *realm
-			result = eXosip_add_authentication_info(_sip_context, _deviceId, _deviceId, _password, "MD5", www_authenticate_header->realm);
+			result = eXosip_add_authentication_info(_sip_context, _deviceId.c_str(), _deviceId.c_str(), _password.c_str(), "MD5", www_authenticate_header->realm);
 			if (result != 0) {
 				std::cout << "eXosip_add_authentication_info failed." << std::endl;
 				return;
 			}
 
-			result = eXosip_register_build_register(_sip_context, evt->rid, 3600, &reg);
+			int32_t expires = 3600;
+			if (_is_logout) {
+				expires = 0;
+			}
+			
+			result = eXosip_register_build_register(_sip_context, evt->rid, expires, &reg);
 			if (result != 0) {
 				std::cout << "eXosip_register_build_register failed." << std::endl;
 				return;
@@ -630,27 +635,29 @@ void Device::start_sip_client(int local_port) {
 	char proxy_uri[128] = { 0 };
 	char contact[128] = { 0 };
 
-	eXosip_guess_localip(_sip_context,AF_INET, _local_ip,128);
+	char local_ip[128] = { 0 };
+	eXosip_guess_localip(_sip_context,AF_INET, local_ip,128);
+	_local_ip = local_ip;
 	//不能用<>包裹，不然eXosip_register_build_initial_register 会一直返回 -5，语法错误
-	sprintf(from_uri,"sip:%s@%s:%d",_deviceId, _local_ip, local_port);
-	sprintf(contact,"sip:%s@%s:%d",_deviceId,_local_ip,local_port);
+	sprintf(from_uri,"sip:%s@%s:%d",_deviceId.c_str(), _local_ip.c_str(), local_port);
+	sprintf(contact,"sip:%s@%s:%d",_deviceId.c_str(), _local_ip.c_str(), local_port);
 	//sprintf(contact,"<sip:%s@%s:%d>",deviceId,server_ip,server_port);
-	sprintf(proxy_uri,"sip:%s@%s:%d",_server_sip_id,_server_ip,_server_port);
+	sprintf(proxy_uri,"sip:%s@%s:%d",_server_sip_id.c_str(), _server_ip.c_str(), _server_port);
 
 	eXosip_clear_authentication_info(_sip_context);
 
 
-	osip_message_t * register_message = NULL;
+	osip_message_t * register_message = nullptr;
 	//struct eXosip_t *excontext, const char *from, const char *proxy, const char *contact, int expires, osip_message_t ** reg
 	int register_id = eXosip_register_build_initial_register(_sip_context, from_uri, proxy_uri, contact,3600,&register_message);
-	if (register_message == NULL) {
+	if (register_message == nullptr) {
 		cout << "eXosip_register_build_initial_register failed" << endl;
 		return;
 	}
 	_register_id = register_id;
 	ExosipCtxLock lock(_sip_context);
 	//提前输入了验证信息，在消息为401处，用eXosip_automatic_action()自动处理
-	eXosip_add_authentication_info(_sip_context, _deviceId, _deviceId, _password, "MD5", NULL);
+	eXosip_add_authentication_info(_sip_context, _deviceId.c_str(), _deviceId.c_str(), _password.c_str(), "MD5", NULL);
 	eXosip_register_send_register(_sip_context, register_id, register_message);
 	if (_callback != nullptr) {
 		_callback(list_index, Message{ STATUS_TYPE ,"发送注册消息" });
@@ -673,18 +680,22 @@ void Device::unregister()
 		}
 
 		eXosip_register_send_register(_sip_context, _register_id, reg);
+
+		_is_logout = true;
 	}
 }
 
-void Device::stop_sip_client() {
-	_is_pushing = false;
-	_is_runing = false;
-
+void Device::stop_sip_client()
+{
 	unregister();
 
 	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+	_is_pushing = false;
+	_is_runing = false;
 }
 
-void Device::set_callback(std::function<void(int index, Message msg)> callback) {
+void Device::set_callback(std::function<void(int index, Message msg)> callback)
+{
 	this->_callback = std::move(callback);
 }
