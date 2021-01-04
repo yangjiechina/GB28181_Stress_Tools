@@ -124,7 +124,6 @@ BOOL CGB28181StressToolsDlg::OnInitDialog()
 	// TODO: Add extra initialization here
 	//set_initial_config_params
 	m_edit_server_sip_id = "34020000002000000008";
-	m_edit_server_ip = "120.232.196.184";
 	m_edit_password = "12345678";
 	m_edit_server_port = 55003;
 	m_edit_device_count = 1;
