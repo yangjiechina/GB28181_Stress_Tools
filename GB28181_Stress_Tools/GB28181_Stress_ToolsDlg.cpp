@@ -124,7 +124,7 @@ BOOL CGB28181StressToolsDlg::OnInitDialog()
 	// TODO: Add extra initialization here
 	//set_initial_config_params
 	m_edit_server_sip_id = "34020000002000000008";
-
+	m_edit_server_ip = "120.232.196.184";
 	m_edit_password = "12345678";
 	m_edit_server_port = 55003;
 	m_edit_device_count = 1;
@@ -272,7 +272,11 @@ void CGB28181StressToolsDlg::Start() {
 		m_edit_password.GetBuffer();
 		string prefix = "3402000000132000000";
 
-		string deviceId = prefix.append(to_string(i));
+		std::string prefix1 = "340200000013";
+		uint64_t numbers = 20000000;
+		numbers += i;
+		std::string deviceId = prefix1 + std::to_string(numbers);
+		//string deviceId = prefix.append(to_string(i));
 		const char * sip_Id = T2A(m_edit_server_sip_id);
 		if(is_started){
 			start_port++;
