@@ -345,7 +345,6 @@ void Device::process_request() {
 				if ("Query" == root_name) {
 					pugi::xml_node cmd_node = root_node.child("CmdType");
 
-
 					if (!cmd_node) {
 						cout << "root node get failed" << endl;
 						break;
