@@ -52,7 +52,9 @@ void Device::mobile_position_task() {
 			eXosip_insubscription_send_request(sip_context, mobile_postition_dialog_id, notify_message);
 		}
 		//eXosip_subscription_send_refresh_request(sip_context, mobile_postition_dialog_id, notify_message);
-		this_thread::sleep_for(std::chrono::seconds(5));
+		//this_thread::sleep_for(std::chrono::seconds(5));
+		std::unique_lock<std::mutex> lck(_mobile_position_mutex);
+		_mobile_postion_condition.wait_for(lck,std::chrono::seconds(5));
 	}
 }
 
@@ -81,8 +83,9 @@ void Device::heartbeat_task() {
 			osip_message_set_body(request, ss.str().c_str(), strlen(ss.str().c_str()));
 			send_request(request);
 		}
-
-		std::this_thread::sleep_for(std::chrono::seconds(60));
+		//std::this_thread::sleep_for(std::chrono::seconds(60));
+		std::unique_lock<std::mutex> lck(_heartbeat_mutex);
+		_heartbeat_condition.wait_for(lck, std::chrono::seconds(60));
 	}
 
 }
@@ -599,10 +602,6 @@ void Device::start_sip_client(int local_port) {
 	}
 }
 
-void Device::stop_sip_client() {
-	is_pushing = false;
-	is_running = false;
-}
 void Device::set_callback(std::function<void(int index, Message msg)> callback) {
 	this->callback = std::move(callback);
 }
@@ -612,24 +611,20 @@ Device::~Device()
 	is_running = false;
 	if (sip_thread) {
 		sip_thread->join();
-		if (!sip_context) {
+		if (sip_context) {
 			eXosip_quit(sip_context);
 			sip_context = NULL;
 		}
 	}
 	register_success = false;
 	if (heartbeat_thread) {
-		//heartbeat_thread->join();
-		if (heartbeat_thread->joinable()) {
-			heartbeat_thread->detach();
-		}
+		_heartbeat_condition.notify_one();
+		heartbeat_thread->join();
 	}
 	is_mobile_position_running = false;
 	if (mobile_position_thread) {
+		_mobile_postion_condition.notify_one();
 		mobile_position_thread->join();
-		/*if (mobile_position_thread->joinable()) {
-			mobile_position_thread->detach();
-		}*/
 	}
 
 	is_pushing = false;

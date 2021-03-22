@@ -13,6 +13,8 @@ extern "C" {
 #include "Message.h"
 #include <thread>
 #include <memory>
+#include <condition_variable>
+#include <mutex>
 
 //----exosip----//
 
@@ -66,6 +68,13 @@ class Device {
 
 	NaluProvider* nalu_provider = nullptr;
 
+	std::mutex _heartbeat_mutex;
+
+	std::condition_variable _heartbeat_condition;
+
+	std::mutex _mobile_position_mutex;
+
+	std::condition_variable _mobile_postion_condition;
 
 public:
 	Device(const char * deviceId, const char * server_sip_id, const char * server_ip, int server_port, const char * password,
@@ -80,8 +89,6 @@ public:
 		this->nalu_provider = nalu_provider;
 	}
 	void start_sip_client(int local_port);
-
-	void stop_sip_client();
 
 	int list_index = 0;
 
