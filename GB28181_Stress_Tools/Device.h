@@ -11,7 +11,7 @@ extern "C" {
 #include <vector>
 #include <functional>
 #include "Message.h"
-
+#include <thread>
 
 //----exosip----//
 
@@ -26,7 +26,20 @@ extern "C" {
 #pragma comment(lib, "Qwave.lib")
 #pragma comment(lib, "delayimp.lib")
 
+class ExosipCtxLock {
+public:
+	ExosipCtxLock(eXosip_t* ctx) :_ctx(ctx) {
+		eXosip_lock(_ctx);
+		//InfoL << "ctx lock!";
+	}
 
+	~ExosipCtxLock() {
+		eXosip_unlock(_ctx);
+		//InfoL << "ctx unlock!";
+	}
+private:
+	eXosip_t* _ctx;
+};
 
 class Device {
 
@@ -99,17 +112,29 @@ private:
 
 	UDPClient* udp_client = nullptr;
 
-	bool is_pushing;
+	bool is_pushing = false;
 
-	bool is_runing;
+	bool is_runing = false;
 
 	int callId = -1;
 
 	int dialogId = -1;
 
+	int mobile_postition_dialog_id = -1;
+
+	int mobile_position_sn = 1;
+
+	std::thread * mobile_position_thread = nullptr;
+
+	bool is_mobile_position_running = false;
+
 	void push_task();
 
 	void heartbeat_task();
+
+	void create_mobile_position_task();
+
+	void mobile_position_task();
 
 	std::function<void(int index, Message msg)> callback;
 	
