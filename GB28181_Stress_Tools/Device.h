@@ -12,6 +12,7 @@ extern "C" {
 #include <functional>
 #include "Message.h"
 #include <thread>
+#include <memory>
 
 //----exosip----//
 
@@ -86,8 +87,7 @@ public:
 
 	void set_callback(std::function<void(int index, Message msg)> callback);
 
-	~Device() {
-	}
+	~Device();
 private:
 
 	void process_request();
@@ -100,9 +100,9 @@ private:
 	
 	void send_request(osip_message_t * request);
 
-	bool register_success;
+	bool register_success = false;
 
-	bool is_tcp;
+	bool is_tcp = false;
 
 	const char * target_ip;
 
@@ -114,7 +114,7 @@ private:
 
 	bool is_pushing = false;
 
-	bool is_runing = false;
+	bool is_running = false;
 
 	int callId = -1;
 
@@ -123,8 +123,6 @@ private:
 	int mobile_postition_dialog_id = -1;
 
 	int mobile_position_sn = 1;
-
-	std::thread * mobile_position_thread = nullptr;
 
 	bool is_mobile_position_running = false;
 
@@ -135,6 +133,14 @@ private:
 	void create_mobile_position_task();
 
 	void mobile_position_task();
+
+	std::shared_ptr<std::thread> heartbeat_thread = nullptr;
+
+	std::shared_ptr<std::thread> mobile_position_thread = nullptr;
+
+	std::shared_ptr<std::thread> push_stream_thread = nullptr;
+
+	std::shared_ptr<std::thread> sip_thread = nullptr;
 
 	std::function<void(int index, Message msg)> callback;
 	

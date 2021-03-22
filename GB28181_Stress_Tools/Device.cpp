@@ -25,8 +25,8 @@ static int get_sn() {
 }
 
 void Device::mobile_position_task() {
-
-	while (is_runing && is_mobile_position_running) {
+	is_mobile_position_running = true;
+	while (is_running && is_mobile_position_running) {
 		{
 			osip_message_t * notify_message = NULL;
 			ExosipCtxLock lock(sip_context);
@@ -57,19 +57,15 @@ void Device::mobile_position_task() {
 }
 
 void Device::create_mobile_position_task() {
-
 	if (mobile_position_thread) {
 		is_mobile_position_running = false;
 		mobile_position_thread->join();
-		delete mobile_position_thread;
-		mobile_position_thread = nullptr;
 	}
-	is_mobile_position_running = true;
-	mobile_position_thread = new std::thread(&Device::mobile_position_task, this);
+	mobile_position_thread = std::make_shared<std::thread>(&Device::mobile_position_task, this);
 }
 
 void Device::heartbeat_task() {
-	while (register_success) {
+	while (is_running && register_success) {
 		stringstream ss;
 		ss << "<?xml version=\"1.0\"?>\r\n";
 		ss << "<Notify>\r\n";
@@ -91,6 +87,7 @@ void Device::heartbeat_task() {
 
 }
 void Device::push_task() {
+
 	udp_client = new UDPClient(is_tcp);
 
 	int status = is_tcp ? udp_client->bind(local_ip, listen_port, target_ip, target_port) : udp_client->bind(local_ip, listen_port);
@@ -101,9 +98,8 @@ void Device::push_task() {
 			callback(list_index, Message{ STATUS_TYPE ,"绑定本地端口或者连接失败" });
 		}
 		if (callId != -1 && dialogId != -1) {
-			eXosip_lock(sip_context);
-			int ret = eXosip_call_terminate(sip_context, callId, dialogId);
-			eXosip_unlock(sip_context);
+			ExosipCtxLock lock(sip_context);
+			eXosip_call_terminate(sip_context, callId, dialogId);
 		}
 		return;
 	}
@@ -145,12 +141,7 @@ void Device::push_task() {
 
 	while (is_pushing)
 	{
-
-
 		for (int i = 0; i < size; i++) {
-			if (!is_pushing) {
-				break;
-			}
 			if (!nalu_provider->get_nalu(i, nalu)) {
 				continue;
 			}
@@ -254,10 +245,6 @@ void Device::push_task() {
 		delete nalu;
 		nalu = nullptr;
 	}
-	is_pushing = false;
-	if (!is_runing) {
-		delete this;
-	}
 }
 
 void Device::send_request(osip_message_t * request) {
@@ -273,7 +260,7 @@ osip_message_t* Device::create_request() {
 	char fromSip[256] = { 0 };
 	char toSip[256] = { 0 };
 
-	if (!is_runing) {
+	if (!is_running) {
 		return nullptr;
 	}
 
@@ -303,23 +290,16 @@ void Device::send_response_ok(eXosip_event_t *evt) {
 	send_response(evt, message);
 }
 void Device::process_request() {
-	eXosip_event_t *evt;
-
-	while (is_runing)
+	eXosip_event_t *evt = NULL;
+	is_running = true;
+	while (is_running)
 	{
-		evt = eXosip_event_wait(sip_context, 0, 100);
-		if (!is_runing) {
-			break;
-		}
+		evt = eXosip_event_wait(sip_context, 0, 50);
 		eXosip_lock(sip_context);
 		eXosip_automatic_action(sip_context);
 		eXosip_unlock(sip_context);
 		if (evt == NULL) {
 			continue;
-		}
-		std::cout << "evt_type" << evt->type << std::endl;
-		if (MSG_IS_SUBSCRIBE(evt->request)) {
-			std::cout << "evt_type" << evt->type << std::endl;
 		}
 		switch (evt->type) {
 
@@ -334,10 +314,10 @@ void Device::process_request() {
 			eXosip_insubscription_send_answer(sip_context, evt->tid, 200, answer);
 			mobile_postition_dialog_id = evt->did;
 			create_mobile_position_task();
+			break;
 		}
-										 break;
 
-		case EXOSIP_MESSAGE_NEW:
+		case EXOSIP_MESSAGE_NEW: {
 			if (MSG_IS_MESSAGE(evt->request)) {
 				osip_body_t *body = NULL;
 				osip_message_get_body(evt->request, 0, &body);
@@ -405,18 +385,17 @@ void Device::process_request() {
 
 			}
 			break;
+		}
 		case EXOSIP_REGISTRATION_SUCCESS:
 		{
 			cout << "注册成功" << endl;
-
 			if (callback != nullptr) {
 				callback(list_index, Message{ STATUS_TYPE ,"注册成功" });
 			}
 			register_success = true;
-			thread heartbeat_task_thread(&Device::heartbeat_task, this);
-			heartbeat_task_thread.detach();
+			heartbeat_thread = std::make_shared<std::thread>(&Device::heartbeat_task, this);
+			break;
 		}
-		break;
 		case EXOSIP_REGISTRATION_FAILURE: {
 			register_success = false;
 			if (evt->response == NULL) {
@@ -433,47 +412,31 @@ void Device::process_request() {
 				//struct eXosip_t *excontext, const char *username, const char *userid, const char *passwd, const char *ha1, const char *realm
 				eXosip_add_authentication_info(sip_context, deviceId, deviceId, password, "MD5", www_authenticate_header->realm);
 			}
+			break;
 		}
-										  break;
 		case EXOSIP_CALL_ACK: {
-
 			//推送流
-			cout << "接收到ack，开始推流" << endl;
+			cout << "接收到 ack，开始推流" << endl;
 			callId = evt->cid;
 			dialogId = evt->did;
 
-			if (udp_client != nullptr) {
-				udp_client->release();
-				delete udp_client;
-				udp_client = nullptr;
+			if (callback != nullptr) {
+				callback(list_index, Message{ STATUS_TYPE ,"开始推流" });
 			}
-			else {
-				if (callback != nullptr) {
-					callback(list_index, Message{ STATUS_TYPE ,"开始推流" });
-				}
-				thread t(&Device::push_task, this);
-				t.detach();
-			}
+			push_stream_thread = std::make_shared<std::thread>(&Device::push_task, this);
+			break;
 		}
-							  break;
 		case EXOSIP_CALL_CLOSED: {
-
+			cout << "接收到Bye，结束推流" << endl;
 			callId = -1;
 			dialogId = -1;
+			is_pushing = false;
 			if (callback != nullptr) {
 				callback(list_index, Message{ STATUS_TYPE ,"推流结束" });
 			}
-			cout << "接收到Bye，结束推流" << endl;
-			is_pushing = false;
-			if (udp_client != nullptr) {
-				udp_client->release();
-				delete udp_client;
-				udp_client = nullptr;
-			}
+			break;
 		}
-								 break;
 		case EXOSIP_CALL_INVITE: {
-
 			cout << "call" << endl;
 			//解析sdp
 			osip_body_t *sdp_body = NULL;
@@ -566,22 +529,17 @@ void Device::process_request() {
 			eXosip_call_send_answer(sip_context, evt->tid, 200, message);
 
 			cout << "reply sdp " << sdp_str.c_str() << endl;
-		}
-								 break;
+			break;
+			}
 		}
 
-		/*if (evt != NULL) {
+		if (evt != NULL) {
 			eXosip_event_free(evt);
 			evt = NULL;
-		}*/
+		}
 	}
-	if (sip_context != NULL) {
-		eXosip_quit(sip_context);
-		sip_context = NULL;
-	}
-	is_runing = false;
-	if (!is_pushing) {
-		delete this;
+	if (is_running) {
+		cout << "sip 异常退出" << endl;
 	}
 }
 
@@ -608,9 +566,7 @@ void Device::start_sip_client(int local_port) {
 		sip_context = nullptr;
 		return;
 	}
-	is_runing = true;
-	thread th(&Device::process_request, this);
-	th.detach();
+	sip_thread = std::make_shared<std::thread>(&Device::process_request, this);
 
 	char from_uri[128] = { 0 };
 	char proxy_uri[128] = { 0 };
@@ -645,8 +601,42 @@ void Device::start_sip_client(int local_port) {
 
 void Device::stop_sip_client() {
 	is_pushing = false;
-	is_runing = false;
+	is_running = false;
 }
 void Device::set_callback(std::function<void(int index, Message msg)> callback) {
 	this->callback = std::move(callback);
+}
+
+Device::~Device()
+{
+	is_running = false;
+	if (sip_thread) {
+		sip_thread->join();
+		if (!sip_context) {
+			eXosip_quit(sip_context);
+			sip_context = NULL;
+		}
+	}
+	register_success = false;
+	if (heartbeat_thread) {
+		//heartbeat_thread->join();
+		if (heartbeat_thread->joinable()) {
+			heartbeat_thread->detach();
+		}
+	}
+	is_mobile_position_running = false;
+	if (mobile_position_thread) {
+		mobile_position_thread->join();
+		/*if (mobile_position_thread->joinable()) {
+			mobile_position_thread->detach();
+		}*/
+	}
+
+	is_pushing = false;
+	if (push_stream_thread){
+		push_stream_thread->join();
+	}
+	if (callback != nullptr) {
+		callback(list_index, Message{ STATUS_TYPE ,"释放设备" });
+	}
 }
