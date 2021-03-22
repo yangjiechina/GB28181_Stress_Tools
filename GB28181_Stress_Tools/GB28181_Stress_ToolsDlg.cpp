@@ -1,7 +1,6 @@
 
 // GB28181_Stress_ToolsDlg.cpp : implementation file
 //
-
 #include "pch.h"
 #include "framework.h"
 #include "GB28181_Stress_Tools.h"
@@ -11,9 +10,13 @@
 #include "Device.h"
 #include "LoadH264.h"
 #include "NaluProvider.h"
+#include <io.h> 
+#include <fcntl.h>  
 #include <iostream>
 #include <thread>
 #include <vector>
+#include "pugixml.hpp"
+#include <sstream>
 
 using namespace std;
 
@@ -90,8 +93,22 @@ BEGIN_MESSAGE_MAP(CGB28181StressToolsDlg, CDialogEx)
 	ON_EN_CHANGE(IDC_EDIT1, &CGB28181StressToolsDlg::OnEnChangeEdit1)
 END_MESSAGE_MAP()
 
-
+//控制台初始化
+void InitConsoleWindow()
+{
+	int nRet = 0;
+	FILE* fp;
+	AllocConsole();
+	nRet = _open_osfhandle((long)GetStdHandle(STD_OUTPUT_HANDLE), _O_TEXT);
+	fp = _fdopen(nRet, "w");
+	*stdout = *fp;
+	setvbuf(stdout, NULL, _IONBF, 0);
+}
 // CGB28181StressToolsDlg message handlers
+bool is_started;
+vector<std::shared_ptr<Device>> m_device_vector;
+vector<NaluProvider*> nalu_vector_vector;
+pugi::xml_document config_file;
 
 BOOL CGB28181StressToolsDlg::OnInitDialog()
 {
@@ -121,13 +138,33 @@ BOOL CGB28181StressToolsDlg::OnInitDialog()
 	//  when the application's main window is not a dialog
 	SetIcon(m_hIcon, TRUE);			// Set big icon
 	SetIcon(m_hIcon, FALSE);		// Set small icon
+	InitConsoleWindow();
+	//加载xml配置文件
+	config_file.load_file("config.xml");
+	pugi::xml_node config = config_file.first_child();
+	if (!config) {
+		//config_file.append_child("config");
+		stringstream ss;
+		ss << "<config>";
+		ss << "<serverId>34020000002000000001</serverId>";
+		ss << "<serverIp></serverIp>";
+		ss << "<serverPort>5060</serverPort>";
+		ss << "<password>12345678</password>";
+		ss << "<count></count>";
+		ss << "</config>";
+		std::string buffer = ss.str();
+		config_file.append_buffer(buffer.c_str(), buffer.length());
+		config = config_file.first_child();
+		config_file.save_file("config.xml");
+	}
 
 	// TODO: Add extra initialization here
 	//set_initial_config_params
-	m_edit_server_sip_id = "34020000002000000001";
-	m_edit_password = "12345678";
-	m_edit_server_port = 5060;
-	m_edit_device_count = 50;
+	m_edit_server_sip_id = config.child("serverId").child_value();
+	m_edit_server_ip = config.child("serverIp").child_value();
+	m_edit_server_port = atoi(config.child("serverPort").child_value());
+	m_edit_password = config.child("password").child_value();
+	m_edit_device_count = atoi(config.child("count").child_value());
 	UpdateData(false);
 
 	CRect list_rect;
@@ -145,6 +182,24 @@ BOOL CGB28181StressToolsDlg::OnInitDialog()
 	m_device_list.InsertColumn(4, _T("推流监听端口"), LVCFMT_CENTER, list_rect.Width() / 8, 4);
 	m_device_list.InsertColumn(5, _T("推流协议"), LVCFMT_CENTER, list_rect.Width() / 8, 5);
 	m_device_list.InsertColumn(6, _T("状态"), LVCFMT_CENTER, list_rect.Width() / 8, 6);
+	//ServerId
+	//ServerIp
+	//ServerPort
+	//Password
+	//count
+	//pugi::xml_node serverId = config.child("serverId");
+	//pugi::xml_node serverIp = config.child("serverIp");
+	//pugi::xml_node serverPort = config.child("serverPort");
+	//pugi::xml_node password = config.child("password");
+	//pugi::xml_node count = config.child("count");
+
+	//std::string serverId = config.child("serverId").child_value();
+	//std::string serverIp = config.child("serverIp").child_value();
+	//std::string serverPort = config.child("serverPort").child_value();
+	//std::string password = config.child("password").child_value();
+	//std::string count = config.child("count").child_value();
+	//config_file.save_file("config.xml");
+
 
 	return TRUE;  // return TRUE  unless you set the focus to a control
 }
@@ -197,11 +252,6 @@ HCURSOR CGB28181StressToolsDlg::OnQueryDragIcon()
 {
 	return static_cast<HCURSOR>(m_hIcon);
 }
-
-
-bool is_started;
-vector<Device *> m_device_vector;
-vector<NaluProvider*> nalu_vector_vector;
 
 void CGB28181StressToolsDlg::update_item(int index, Message msg) {
 
@@ -284,13 +334,15 @@ void CGB28181StressToolsDlg::Start() {
 			m_device_list.SetItemText(i, 5, _T(""));
 			m_device_list.SetItemText(i, 6, _T(""));
 
-			Device * device = new Device(deviceId.c_str(), T2A(m_edit_server_sip_id), T2A(m_edit_server_ip), m_edit_server_port,
+			//Device * device = new Device(deviceId.c_str(), T2A(m_edit_server_sip_id), T2A(m_edit_server_ip), m_edit_server_port,
+			//	T2A(m_edit_password), provider);
+			
+			std::shared_ptr<Device> device_ptr =  std::make_shared<Device>(deviceId.c_str(), T2A(m_edit_server_sip_id), T2A(m_edit_server_ip), m_edit_server_port,
 				T2A(m_edit_password), provider);
-			device->list_index = i;
-			device->set_callback(callback);
-			device->start_sip_client(start_port);
-
-			m_device_vector.push_back(device);
+			device_ptr->list_index = i;
+			device_ptr->set_callback(callback);
+			device_ptr->start_sip_client(start_port);
+			m_device_vector.push_back(device_ptr);
 
 		}
 		//如果在启动的过程中点击“结束”，跳出循环
@@ -301,14 +353,13 @@ void CGB28181StressToolsDlg::Start() {
 	}
 }
 void CGB28181StressToolsDlg::Stop() {
-	while (!m_device_vector.empty()) {
+	/*while (!m_device_vector.empty()) {
 		Device* device =  m_device_vector.back();
 		m_device_vector.pop_back();
 		device->stop_sip_client();
 		m_device_list.SetItemText(device->list_index, 6, _T("释放设备"));
-		/*delete device;
-		device = nullptr;*/
-	}
+	}*/
+	m_device_vector.clear();
 }
 bool CGB28181StressToolsDlg::CheckParams() {
 	if (m_edit_server_sip_id.GetLength() < 10) {
@@ -334,6 +385,25 @@ bool CGB28181StressToolsDlg::CheckParams() {
 		MessageBox(_T("密码不能为空"));
 		return false;
 	}
+	USES_CONVERSION;
+	/*pugi::xml_node config = config_file.first_child();
+	config.child("serverId").first_child().set_value(T2A(m_edit_server_sip_id));
+	config.child("serverIp").first_child().set_value(T2A(m_edit_server_ip));
+	config.child("serverPort").first_child().set_value(to_string(m_edit_server_port).c_str());
+	config.child("password").first_child().set_value(T2A(m_edit_password));
+	config.child("count").first_child().set_value(to_string(m_edit_device_count).c_str());*/
+	stringstream ss;
+	ss << "<config>";
+	ss << "<serverId>"<< T2A(m_edit_server_sip_id)<<"</serverId>";
+	ss << "<serverIp>"<< T2A(m_edit_server_ip)<< "</serverIp>";
+	ss << "<serverPort>"<< m_edit_server_port<<"</serverPort>";
+	ss << "<password>"<< T2A(m_edit_password) <<"</password>";
+	ss << "<count>"<< m_edit_device_count <<"</count>";
+	ss << "</config>";
+	config_file.reset();
+	std::string buffer =  ss.str();
+	config_file.append_buffer(buffer.c_str(), buffer.length());
+	config_file.save_file("config.xml");
 	return true;
 }
 void CGB28181StressToolsDlg::OnBnClickedButton1()
