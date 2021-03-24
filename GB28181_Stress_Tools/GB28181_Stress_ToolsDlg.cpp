@@ -109,6 +109,7 @@ bool is_started;
 vector<std::shared_ptr<Device>> m_device_vector;
 vector<NaluProvider*> nalu_vector_vector;
 pugi::xml_document config_file;
+std::shared_ptr<std::thread> task_thread = nullptr;
 
 BOOL CGB28181StressToolsDlg::OnInitDialog()
 {
@@ -272,73 +273,64 @@ void CGB28181StressToolsDlg::update_item(int index, Message msg) {
 
 	}
 }
+void paddingId(std::string& dst,int source) {
+	std::string number =  to_string(source);
+	for (int i = number.length();i < 4; i++) {
+		dst.append("0");
+	}
+	dst.append(number);
+}
 void CGB28181StressToolsDlg::Start() {
 	m_device_list.DeleteAllItems();
-
 	int device_count = m_edit_device_count;
+	if (device_count > 10000) {
+		device_count = 9999;
+	}
 	//多少Deivce对应一个队列
 	int rate = 20;
 
 	int start_port = 50000;
 
-	extern vector<Nalu*> nalu_vector;
-
 	callback = std::bind(&CGB28181StressToolsDlg::update_item,this, std::placeholders::_1, std::placeholders::_2);
-
+	std::string device_id_prefix = "3402000000132000";
+	std::string channel_id_prefix = "3402000000131000";
+	std::string device_id;
+	std::string channel_id;
 	for (int i = 0; i < device_count; i++) {
 
-		this_thread::sleep_for(chrono::seconds(1));
-		
-		NaluProvider* provider = nullptr;
+		if (!is_started) {
+			break;
+		}
 
+		this_thread::sleep_for(std::chrono::milliseconds(100));
+
+		device_id = device_id_prefix;
+
+		channel_id = channel_id_prefix;
+
+		paddingId(device_id,i+1);
+
+		paddingId(channel_id, i+1);
+		
 		int index = i / rate;
 		
-		if (nalu_vector_vector.size() >= index + 1) {
-			provider = nalu_vector_vector.at(index);
-		}else {
-			//拷贝h264队列
-			if (i % rate == 0) {
-				size_t size = nalu_vector.size();
-				vector<Nalu*>* current_nalu_vector = new vector<Nalu*>();
-				for (int i = 0; i < size; i++) {
-					Nalu * nalu = nalu_vector.at(i);
-
-					char * copy_packet = (char *)malloc(nalu->length * sizeof(char));
-
-					memcpy(copy_packet, nalu->packet, nalu->length);
-
-					Nalu * copy_nalu = new Nalu();
-					copy_nalu->packet = copy_packet;
-					copy_nalu->length = nalu->length;
-					copy_nalu->type = nalu->type;
-					current_nalu_vector->push_back(copy_nalu);
-				}
-				 provider = new NaluProvider(current_nalu_vector);
-				nalu_vector_vector.push_back(provider);
-			}
-		}
 		USES_CONVERSION;
 
 		m_edit_password.GetBuffer();
-		string prefix = "3402000000132000000";
 
-		string deviceId = prefix.append(to_string(i));
 		const char * sip_Id = T2A(m_edit_server_sip_id);
 		if(is_started){
 			start_port++;
-			m_device_list.InsertItem(i, CString(to_string(i).c_str()));
-			m_device_list.SetItemText(i, 1,CString(deviceId.c_str()));
-			m_device_list.SetItemText(i, 2, CString(deviceId.c_str()));
+			m_device_list.InsertItem(i, CString(to_string(i+1).c_str()));
+			m_device_list.SetItemText(i, 1,CString(device_id.c_str()));
+			m_device_list.SetItemText(i, 2, CString(channel_id.c_str()));
 			m_device_list.SetItemText(i, 3, CString(to_string(start_port).c_str()));
 			m_device_list.SetItemText(i, 4, _T(""));
 			m_device_list.SetItemText(i, 5, _T(""));
 			m_device_list.SetItemText(i, 6, _T(""));
 
-			//Device * device = new Device(deviceId.c_str(), T2A(m_edit_server_sip_id), T2A(m_edit_server_ip), m_edit_server_port,
-			//	T2A(m_edit_password), provider);
-			
-			std::shared_ptr<Device> device_ptr =  std::make_shared<Device>(deviceId.c_str(), T2A(m_edit_server_sip_id), T2A(m_edit_server_ip), m_edit_server_port,
-				T2A(m_edit_password), provider);
+			std::shared_ptr<Device> device_ptr = std::make_shared<Device>(device_id.c_str(), channel_id.c_str(), T2A(m_edit_server_sip_id), T2A(m_edit_server_ip), m_edit_server_port,
+				T2A(m_edit_password), nullptr);
 			device_ptr->list_index = i;
 			device_ptr->set_callback(callback);
 			device_ptr->start_sip_client(start_port);
@@ -353,12 +345,6 @@ void CGB28181StressToolsDlg::Start() {
 	}
 }
 void CGB28181StressToolsDlg::Stop() {
-	/*while (!m_device_vector.empty()) {
-		Device* device =  m_device_vector.back();
-		m_device_vector.pop_back();
-		device->stop_sip_client();
-		m_device_list.SetItemText(device->list_index, 6, _T("释放设备"));
-	}*/
 	m_device_vector.clear();
 }
 bool CGB28181StressToolsDlg::CheckParams() {
@@ -406,6 +392,8 @@ bool CGB28181StressToolsDlg::CheckParams() {
 	config_file.save_file("config.xml");
 	return true;
 }
+extern vector<Nalu*> nalu_vector;
+
 void CGB28181StressToolsDlg::OnBnClickedButton1()
 {
 	//1.读取h264视频源
@@ -416,8 +404,7 @@ void CGB28181StressToolsDlg::OnBnClickedButton1()
 		if (!CheckParams()) {
 			return;
 		}
-
-		extern vector<Nalu*> nalu_vector;
+		
 		if(nalu_vector.empty()){
 			const char * h264_path = "bigbuckbunnynoB_480x272.h264";
 			if (load(h264_path) < 0) {
@@ -426,15 +413,16 @@ void CGB28181StressToolsDlg::OnBnClickedButton1()
 			}
 		}
 		is_started = true;
-		thread t(&CGB28181StressToolsDlg::Start,this);
-		t.detach();
+		task_thread = std::make_shared<std::thread>(&CGB28181StressToolsDlg::Start, this);
 		m_btn_start.SetWindowTextW(_T("结束"));
 	}
 	//释放所有设备
 	else {
 		is_started = false;
-		thread t(&CGB28181StressToolsDlg::Stop, this);
-		t.detach();
+		if (task_thread) {
+			task_thread->join();
+		}
+		Stop();
 		m_btn_start.SetWindowTextW(_T("开始"));
 
 	}

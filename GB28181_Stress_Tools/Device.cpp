@@ -5,8 +5,6 @@
 #include <vector>
 #include <sstream>
 #include "gb28181_header_maker.h"
-
-
 using namespace std;
 
 static int start_port = 40000;
@@ -25,7 +23,6 @@ static int get_sn() {
 }
 
 void Device::mobile_position_task() {
-	is_mobile_position_running = true;
 	while (is_running && is_mobile_position_running) {
 		{
 			osip_message_t * notify_message = NULL;
@@ -58,16 +55,131 @@ void Device::mobile_position_task() {
 	}
 }
 
+void Device::create_heartbeat_task()
+{
+	if (heartbeat_thread) {
+		is_heartbeat_running = false;
+		if (heartbeat_thread && heartbeat_thread->joinable()) {
+			_heartbeat_condition.notify_one();
+			heartbeat_thread->join();
+		}
+	}
+	is_heartbeat_running = true;
+	heartbeat_thread = std::make_shared<std::thread>(&Device::heartbeat_task, this);
+}
+
+void Device::create_push_stream_task()
+{
+	if (push_stream_thread) {
+		is_pushing = false;
+		if (push_stream_thread->joinable()){
+			push_stream_thread->join();
+		}
+	}
+	is_pushing = true;
+	push_stream_thread = std::make_shared<std::thread>(&Device::push_task, this);
+}
+
 void Device::create_mobile_position_task() {
 	if (mobile_position_thread) {
 		is_mobile_position_running = false;
-		mobile_position_thread->join();
+		if (mobile_position_thread->joinable()) {
+			_mobile_postion_condition.notify_one();
+			mobile_position_thread->join();
+		}
 	}
+	is_mobile_position_running = true;
 	mobile_position_thread = std::make_shared<std::thread>(&Device::mobile_position_task, this);
 }
 
+void Device::process_call(eXosip_event_t * evt)
+{
+	//解析sdp
+	osip_body_t *sdp_body = NULL;
+	osip_message_get_body(evt->request, 0, &sdp_body);
+	if (sdp_body != NULL) {
+		printf("request >>> %s", sdp_body->body);
+	}
+	else {
+		cout << "sdp error" << endl;
+		return;
+	}
+	sdp_message_t * sdp = NULL;
+
+	if (OSIP_SUCCESS != sdp_message_init(&sdp)) {
+		cout << "sdp_message_init failed" << endl;
+		if (callback != nullptr) {
+			callback(list_index, Message{ STATUS_TYPE ,"sdp_message_init failed" });
+		}
+		return;
+	}
+	if (OSIP_SUCCESS != sdp_message_parse(sdp, sdp_body->body)) {
+		cout << "sdp_message_parse failed" << endl;
+		if (callback != nullptr) {
+			callback(list_index, Message{ STATUS_TYPE ,"sdp_message_parse failed" });
+		}
+		return;
+	}
+	sdp_connection_t * connect = eXosip_get_video_connection(sdp);
+	sdp_media_t * media = eXosip_get_video_media(sdp);
+	target_ip = connect->c_addr;
+	target_port = atoi(media->m_port);
+	char * protocol = media->m_proto;
+	is_tcp = strstr(protocol, "TCP");
+
+	if (callback != nullptr) {
+		char port[5];
+		snprintf(port, 5, "%d", target_port);
+		callback(list_index, Message{ PULL_STREAM_PROTOCOL_TYPE ,is_tcp ? "TCP" : "UDP" });
+		callback(list_index, Message{ PULL_STREAM_PORT_TYPE ,port });
+	}
+	//发送200_ok
+	listen_port = get_port();
+	char port[10];
+	snprintf(port, 10, "%d", listen_port);
+	if (callback != nullptr) {
+		callback(list_index, Message{ PULL_STREAM_PORT_TYPE ,port });
+	}
+	stringstream ss;
+	ss << "v=0\r\n";
+	ss << "o=" << videoChannelId << " 0 0 IN IP4 " << local_ip << "\r\n";
+	ss << "s=Play\r\n";
+	ss << "c=IN IP4 " << local_ip << "\r\n";
+	ss << "t=0 0\r\n";
+	if (!is_tcp) {
+		ss << "m=video " << listen_port << " TCP/RTP/AVP 96\r\n";
+	}
+	else {
+		ss << "m=video " << listen_port << " RTP/AVP 96\r\n";
+	}
+	ss << "a=sendonly\r\n";
+	ss << "a=rtpmap:96 PS/90000\r\n";
+	ss << "y=4294967295\r\n";
+	string sdp_str = ss.str();
+
+
+	size_t size = sdp_str.size();
+
+	osip_message_t * message = evt->request;
+	int status = eXosip_call_build_answer(sip_context, evt->tid, 200, &message);
+
+	if (status != 0) {
+		if (callback != nullptr) {
+			callback(list_index, Message{ STATUS_TYPE ,"回复invite失败" });
+		}
+		return;
+	}
+
+	osip_message_set_content_type(message, "APPLICATION/SDP");
+	osip_message_set_body(message, sdp_str.c_str(), sdp_str.size());
+
+	eXosip_call_send_answer(sip_context, evt->tid, 200, message);
+
+	cout << "reply sdp " << sdp_str.c_str() << endl;
+}
+
 void Device::heartbeat_task() {
-	while (is_running && register_success) {
+	while (is_running && register_success && is_heartbeat_running) {
 		stringstream ss;
 		ss << "<?xml version=\"1.0\"?>\r\n";
 		ss << "<Notify>\r\n";
@@ -106,7 +218,6 @@ void Device::push_task() {
 		}
 		return;
 	}
-	is_pushing = true;
 
 	char ps_header[PS_HDR_LEN];
 
@@ -134,20 +245,16 @@ void Device::push_task() {
 	int ssrc = 0xffffffff;
 	int rtp_seq = 0;
 
-	Nalu *nalu = new Nalu();
-	nalu->packet = (char *)malloc(1024 * 128);
-	nalu->length = 1024 * 128;
-
-
 	extern std::vector<Nalu*> nalu_vector;
 	size_t size = nalu_vector.size();
 
 	while (is_pushing)
 	{
 		for (int i = 0; i < size; i++) {
-			if (!nalu_provider->get_nalu(i, nalu)) {
-				continue;
+			if (!is_pushing) {
+				break;
 			}
+			Nalu *nalu = nalu_vector.at(i);
 
 			NaluType  type = nalu->type;
 			int length = nalu->length;
@@ -217,16 +324,7 @@ void Device::push_task() {
 				memcpy(rtp_packet + +rtp_start_index + RTP_HDR_LEN, frame + (i* single_packet_max_length), writed_count);
 				rtp_seq++;
 
-				if (is_pushing) {
-					udp_client->send_packet(target_ip, target_port, rtp_packet, rtp_start_index + rtp_packet_length);
-				}
-				else {
-					if (nalu != nullptr) {
-						delete nalu;
-						nalu = nullptr;
-					}
-					return;
-				}
+				udp_client->send_packet(target_ip, target_port, rtp_packet, rtp_start_index + rtp_packet_length);
 			}
 
 			pts += interval;
@@ -243,10 +341,6 @@ void Device::push_task() {
 		udp_client->release();
 		delete udp_client;
 		udp_client = nullptr;
-	}
-	if (nalu != nullptr) {
-		delete nalu;
-		nalu = nullptr;
 	}
 }
 
@@ -274,7 +368,7 @@ osip_message_t* Device::create_request() {
 	int status = eXosip_message_build_request(sip_context,
 		&request, "MESSAGE", toSip, fromSip, NULL);
 	if (OSIP_SUCCESS != status) {
-		cout << "build requests failed" << endl;
+		std::cout << "build requests failed" << std::endl;
 	}
 
 	return request;
@@ -292,9 +386,22 @@ void Device::send_response_ok(eXosip_event_t *evt) {
 	eXosip_message_build_answer(sip_context, evt->tid, 200, &message);
 	send_response(evt, message);
 }
+void print_request(osip_message_t * request_message) {
+	char *dest = NULL;
+	size_t length = 0;
+	int i = osip_message_to_str(request_message, &dest, &length);
+	if (i == 0)
+	{
+		std::cout << dest << std::endl;
+		delete[] dest;
+		//osip_free(dest);
+	}
+	else {
+		std::cout << "osip_message_to_str failed" << endl;
+	}
+}
 void Device::process_request() {
 	eXosip_event_t *evt = NULL;
-	is_running = true;
 	while (is_running)
 	{
 		evt = eXosip_event_wait(sip_context, 0, 50);
@@ -304,6 +411,7 @@ void Device::process_request() {
 		if (evt == NULL) {
 			continue;
 		}
+		//print_request(evt->request);
 		switch (evt->type) {
 
 		case EXOSIP_IN_SUBSCRIPTION_NEW: {
@@ -362,7 +470,7 @@ void Device::process_request() {
 						ss << "<SumNum>" << 1 << "</SumNum>\r\n";
 						ss << "<DeviceList Num=\"" << 1 << "\">\r\n";
 						ss << "<Item>\r\n";
-						ss << "<DeviceID>" << deviceId << "</DeviceID>\r\n";
+						ss << "<DeviceID>" << videoChannelId << "</DeviceID>\r\n";
 						ss << "<Name>IPC</Name>\r\n";
 						ss << "<ParentID>" << server_sip_id << "</ParentID>\r\n";
 						ss << "</Item>\r\n";
@@ -395,7 +503,10 @@ void Device::process_request() {
 				callback(list_index, Message{ STATUS_TYPE ,"注册成功" });
 			}
 			register_success = true;
-			heartbeat_thread = std::make_shared<std::thread>(&Device::heartbeat_task, this);
+			if (heartbeat_thread) {
+				break;
+			}
+			create_heartbeat_task();
 			break;
 		}
 		case EXOSIP_REGISTRATION_FAILURE: {
@@ -425,7 +536,7 @@ void Device::process_request() {
 			if (callback != nullptr) {
 				callback(list_index, Message{ STATUS_TYPE ,"开始推流" });
 			}
-			push_stream_thread = std::make_shared<std::thread>(&Device::push_task, this);
+			create_push_stream_task();
 			break;
 		}
 		case EXOSIP_CALL_CLOSED: {
@@ -439,98 +550,7 @@ void Device::process_request() {
 			break;
 		}
 		case EXOSIP_CALL_INVITE: {
-			cout << "call" << endl;
-			//解析sdp
-			osip_body_t *sdp_body = NULL;
-			osip_message_get_body(evt->request, 0, &sdp_body);
-			if (sdp_body != NULL) {
-				printf("request >>> %s", sdp_body->body);
-			}
-			else {
-				cout << "sdp error" << endl;
-				break;
-			}
-			sdp_message_t * sdp = NULL;
-
-			if (OSIP_SUCCESS != sdp_message_init(&sdp)) {
-				cout << "sdp_message_init failed" << endl;
-				if (callback != nullptr) {
-					callback(list_index, Message{ STATUS_TYPE ,"sdp_message_init failed" });
-				}
-				break;
-			}
-			if (OSIP_SUCCESS != sdp_message_parse(sdp, sdp_body->body)) {
-				cout << "sdp_message_parse failed" << endl;
-				if (callback != nullptr) {
-					callback(list_index, Message{ STATUS_TYPE ,"sdp_message_parse failed" });
-				}
-				break;
-			}
-			sdp_connection_t * connect = eXosip_get_video_connection(sdp);
-			sdp_media_t * media = eXosip_get_video_media(sdp);
-			target_ip = connect->c_addr;
-			target_port = atoi(media->m_port);
-			char * protocol = media->m_proto;
-			is_tcp = strstr(protocol, "TCP");
-
-			if (callback != nullptr) {
-				char port[5];
-				snprintf(port, 5, "%d", target_port);
-				callback(list_index, Message{ PULL_STREAM_PROTOCOL_TYPE ,is_tcp ? "TCP" : "UDP" });
-				callback(list_index, Message{ PULL_STREAM_PORT_TYPE ,port });
-			}
-			int ssrc = 0;
-			char  ssrc_c[10] = { 0 };
-			char * ssrc_address = strstr(sdp_body->body, "y=");
-			if (ssrc_address) {
-				char * end_address = strstr(ssrc_address, "\r\n");
-				size_t length = end_address - ssrc_address;
-				memcpy(ssrc_c, ssrc_address + 2, length + 1);
-				ssrc = atoi(ssrc_c);
-			}
-			//发送200_ok
-			listen_port = get_port();
-			char port[10];
-			snprintf(port, 10, "%d", listen_port);
-			if (callback != nullptr) {
-				callback(list_index, Message{ PULL_STREAM_PORT_TYPE ,port });
-			}
-			stringstream ss;
-			ss << "v=0\r\n";
-			ss << "o=" << videoChannelId << " 0 0 IN IP4 " << local_ip << "\r\n";
-			ss << "s=Play\r\n";
-			ss << "c=IN IP4 " << local_ip << "\r\n";
-			ss << "t=0 0\r\n";
-			if (!is_tcp) {
-				ss << "m=video " << listen_port << " TCP/RTP/AVP 96\r\n";
-			}
-			else {
-				ss << "m=video " << listen_port << " RTP/AVP 96\r\n";
-			}
-			ss << "a=sendonly\r\n";
-			ss << "a=rtpmap:96 PS/90000\r\n";
-			ss << "y=" << ssrc_c << "\r\n";
-			string sdp_str = ss.str();
-
-
-			size_t size = sdp_str.size();
-
-			osip_message_t * message = evt->request;
-			int status = eXosip_call_build_answer(sip_context, evt->tid, 200, &message);
-
-			if (status != 0) {
-				if (callback != nullptr) {
-					callback(list_index, Message{ STATUS_TYPE ,"回复invite失败" });
-				}
-				break;
-			}
-
-			osip_message_set_content_type(message, "APPLICATION/SDP");
-			osip_message_set_body(message, sdp_str.c_str(), sdp_str.size());
-
-			eXosip_call_send_answer(sip_context, evt->tid, 200, message);
-
-			cout << "reply sdp " << sdp_str.c_str() << endl;
+			process_call(evt);
 			break;
 			}
 		}
@@ -568,6 +588,8 @@ void Device::start_sip_client(int local_port) {
 		sip_context = nullptr;
 		return;
 	}
+	is_running = true;
+
 	sip_thread = std::make_shared<std::thread>(&Device::process_request, this);
 
 	char from_uri[128] = { 0 };
@@ -616,18 +638,19 @@ Device::~Device()
 		}
 	}
 	register_success = false;
-	if (heartbeat_thread) {
+	is_heartbeat_running = false;
+	if (heartbeat_thread && heartbeat_thread->joinable()) {
 		_heartbeat_condition.notify_one();
 		heartbeat_thread->join();
 	}
 	is_mobile_position_running = false;
-	if (mobile_position_thread) {
+	if (mobile_position_thread && mobile_position_thread->joinable()) {
 		_mobile_postion_condition.notify_one();
 		mobile_position_thread->join();
 	}
 
 	is_pushing = false;
-	if (push_stream_thread){
+	if (push_stream_thread && push_stream_thread->joinable()){
 		push_stream_thread->join();
 	}
 	if (callback != nullptr) {

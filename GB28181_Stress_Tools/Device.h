@@ -77,10 +77,10 @@ class Device {
 	std::condition_variable _mobile_postion_condition;
 
 public:
-	Device(const char * deviceId, const char * server_sip_id, const char * server_ip, int server_port, const char * password,
+	Device(const char * deviceId, const char * channelId, const char * server_sip_id, const char * server_ip, int server_port, const char * password,
 		NaluProvider* nalu_provider) {
 		memcpy(this->deviceId, deviceId, strlen(deviceId));
-		memcpy(this->videoChannelId, deviceId, strlen(deviceId));
+		memcpy(this->videoChannelId, channelId, strlen(channelId));
 		memcpy(this->server_sip_id, server_sip_id, strlen(server_sip_id));
 		memcpy(server_sip_realm, server_sip_id, 10);
 		memcpy(this->server_ip, server_ip, strlen(server_ip));
@@ -119,10 +119,6 @@ private:
 
 	UDPClient* udp_client = nullptr;
 
-	bool is_pushing = false;
-
-	bool is_running = false;
-
 	int callId = -1;
 
 	int dialogId = -1;
@@ -131,15 +127,25 @@ private:
 
 	int mobile_position_sn = 1;
 
+	bool is_pushing = false;
+
+	bool is_running = false;
+
 	bool is_mobile_position_running = false;
+
+	bool is_heartbeat_running = false;
 
 	void push_task();
 
 	void heartbeat_task();
 
-	void create_mobile_position_task();
-
 	void mobile_position_task();
+
+	void create_heartbeat_task();
+
+	void create_push_stream_task();
+
+	void create_mobile_position_task();
 
 	std::shared_ptr<std::thread> heartbeat_thread = nullptr;
 
@@ -148,6 +154,8 @@ private:
 	std::shared_ptr<std::thread> push_stream_thread = nullptr;
 
 	std::shared_ptr<std::thread> sip_thread = nullptr;
+
+	void process_call(eXosip_event_t *evt);
 
 	std::function<void(int index, Message msg)> callback;
 	
