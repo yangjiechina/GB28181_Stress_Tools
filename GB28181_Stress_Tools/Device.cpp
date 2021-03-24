@@ -126,7 +126,6 @@ void Device::process_call(eXosip_event_t * evt)
 	target_port = atoi(media->m_port);
 	char * protocol = media->m_proto;
 	is_tcp = strstr(protocol, "TCP");
-
 	if (callback != nullptr) {
 		char port[5];
 		snprintf(port, 5, "%d", target_port);
@@ -146,7 +145,7 @@ void Device::process_call(eXosip_event_t * evt)
 	ss << "s=Play\r\n";
 	ss << "c=IN IP4 " << local_ip << "\r\n";
 	ss << "t=0 0\r\n";
-	if (!is_tcp) {
+	if (is_tcp) {
 		ss << "m=video " << listen_port << " TCP/RTP/AVP 96\r\n";
 	}
 	else {
