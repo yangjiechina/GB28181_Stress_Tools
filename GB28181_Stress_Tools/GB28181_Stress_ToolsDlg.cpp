@@ -298,11 +298,11 @@ void CGB28181StressToolsDlg::Start() {
 	std::string channel_id;
 	for (int i = 0; i < device_count; i++) {
 
+		this_thread::sleep_for(std::chrono::milliseconds(100));
+
 		if (!is_started) {
 			break;
 		}
-
-		this_thread::sleep_for(std::chrono::milliseconds(100));
 
 		device_id = device_id_prefix;
 
