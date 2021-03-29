@@ -298,7 +298,7 @@ void CGB28181StressToolsDlg::Start() {
 	std::string channel_id;
 	for (int i = 0; i < device_count; i++) {
 
-		this_thread::sleep_for(std::chrono::milliseconds(100));
+		this_thread::sleep_for(std::chrono::milliseconds(300));
 
 		if (!is_started) {
 			break;
