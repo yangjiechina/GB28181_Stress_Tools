@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<config>
+	<serverId>34020000002000000001</serverId>
+	<serverIp>192.168.31.113</serverIp>
+	<serverPort>5060</serverPort>
+	<password>12345678</password>
+	<count>1</count>
+	<videoPath>232937384-1-208_baseline.mp4</videoPath>
+</config>
